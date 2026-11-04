@@ -1,0 +1,89 @@
+{
+  "source": "existing audited nt_msg_db_util checkout",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809"
+    },
+    {
+      "path": "msgdb/export_schema.py",
+      "sha256": "41bf2e4d1de9a19ffb9d112231fe4d03d2769680d93c9cd0959123177e82b59f"
+    },
+    {
+      "path": "msgdb/__init__.py",
+      "sha256": "68393071a22eeedb5c7846e8f1d3986cbda13688f67e039c2f31cf33ff813ef4"
+    },
+    {
+      "path": "msgdb/c2c/models.py",
+      "sha256": "0bee49a45793cc2df91da414d7a44ddeb05b44a1e9f4287417c211349dd9645d"
+    },
+    {
+      "path": "msgdb/c2c/parser.py",
+      "sha256": "16c27cabeb50c421d593df7e4d178af8ba28490d69a7cd821008501883b78af2"
+    },
+    {
+      "path": "msgdb/c2c/__init__.py",
+      "sha256": "4f744893a674ac889ae994ea9b645e52b8332b811e703abb53490facf2d72fca"
+    },
+    {
+      "path": "msgdb/group/exporter.py",
+      "sha256": "4d47c7f608be165a2608d15ad456fbce437b88234da932e642b889a9778a9643"
+    },
+    {
+      "path": "msgdb/group/models.py",
+      "sha256": "9b9bbe5d8e4b4acc1cb8501871ffd0193a6e4ead3634808712d705ba152203bd"
+    },
+    {
+      "path": "msgdb/group/__init__.py",
+      "sha256": "11513a1f54f182e4f4b3d222cb21ddfae30d892e70e496cf86f4b446ffea3b0f"
+    },
+    {
+      "path": "msgdb/proto/c2c_40800_parser.py",
+      "sha256": "70382feb40a8d60a45b74e51b1d53611593f78feada3d003b475fc09fe91b781"
+    },
+    {
+      "path": "msgdb/proto/c2c_40800_pb2.py",
+      "sha256": "78f570dde641e471e93b48f4e10c6ce75ee62d1aa3769d99da9101ae0e8e0bfc"
+    },
+    {
+      "path": "msgdb/proto/group_40600_parser.py",
+      "sha256": "b919c7ed6677d31af61cb55d269c4116cbf41d7c977d22c53019f7d5a9b07aae"
+    },
+    {
+      "path": "msgdb/proto/group_40600_pb2.py",
+      "sha256": "7e9b789783daa5b882755e8a119741a1f78f9e6f5e842e653464eede14e76ddf"
+    },
+    {
+      "path": "msgdb/proto/group_40605_parser.py",
+      "sha256": "b2f5596ab438204ea73442317395eb801e54c225170a2ee7787bbf3c9a099be9"
+    },
+    {
+      "path": "msgdb/proto/group_40605_pb2.py",
+      "sha256": "0492c16256ee22319826269621a8fed51f83bdfb0acc7d315f139c4247db2bf8"
+    },
+    {
+      "path": "msgdb/proto/group_40801_parser.py",
+      "sha256": "0e3659a4452f8d7e7f2d6a8e87736d08ffddfdf6d637c80f64d7ddff04efaa35"
+    },
+    {
+      "path": "msgdb/proto/group_40801_pb2.py",
+      "sha256": "5d2d68656283ce99c65bf0aa2fb0455437837d9e457c952c97013e3d318a42f3"
+    },
+    {
+      "path": "msgdb/proto/group_40900_parser.py",
+      "sha256": "194d2a7d6f606384e089119f513c1e101211da11b735720b2db5837e08777ea2"
+    },
+    {
+      "path": "msgdb/proto/group_40900_pb2.py",
+      "sha256": "ea1ac116030d2cf730f8894a2ccc534e2338bc43b9fc58b39fa3c5dc11a5b718"
+    },
+    {
+      "path": "msgdb/proto/wire.py",
+      "sha256": "96605d98e07be7b6bf6204b58a5ec8325cc1a4b394131b50ccd7389ec97410c1"
+    },
+    {
+      "path": "msgdb/proto/__init__.py",
+      "sha256": "d9e166610caf3ab585ab5cd6fc39281835ee951d49af50e7c1c9715b0246c585"
+    }
+  ]
+}

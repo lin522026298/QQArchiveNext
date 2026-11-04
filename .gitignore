@@ -1,0 +1,13 @@
+work/
+private/
+state/
+.venv/
+__pycache__/
+*.pyc
+*.private.json
+*.key
+*.db*
+*.sqlite*
+*.partial
+*.zip
+*.log
