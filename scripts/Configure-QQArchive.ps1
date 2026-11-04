@@ -9,6 +9,11 @@ param(
 )
 $ErrorActionPreference='Stop'
 function Full([string]$Path){[IO.Path]::GetFullPath($Path).TrimEnd('\')}
+function Hash([string]$Path){
+    $stream=[IO.File]::OpenRead($Path);$sha=[Security.Cryptography.SHA256]::Create()
+    try{[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant()}
+    finally{$stream.Dispose();$sha.Dispose()}
+}
 function Overlap([string]$First,[string]$Second){
     $a=(Full $First)+'\';$b=(Full $Second)+'\'
     $a.StartsWith($b,[StringComparison]::OrdinalIgnoreCase) -or $b.StartsWith($a,[StringComparison]::OrdinalIgnoreCase)
@@ -41,9 +46,9 @@ $program=Join-Path $state 'application'
 foreach($item in $manifest.files){
     $source=Full (Join-Path $applicationPath $item.path);$target=Full (Join-Path $program $item.path)
     if(-not $source.StartsWith((Full $applicationPath)+'\',[StringComparison]::OrdinalIgnoreCase) -or -not $target.StartsWith((Full $program)+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Unsafe program manifest path.'}
-    if((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -ne $item.sha256){throw 'Program hash mismatch.'}
+    if((Hash $source) -ne $item.sha256){throw 'Program hash mismatch.'}
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $target));[IO.File]::Copy($source,$target,$false)
-    if((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne $item.sha256){throw 'Program copy hash mismatch.'}
+    if((Hash $target) -ne $item.sha256){throw 'Program copy hash mismatch.'}
 }
 [IO.File]::Copy($manifestPath,(Join-Path $program 'release_verification.json'),$false)
 $private=Join-Path $state 'private';[void][IO.Directory]::CreateDirectory($private)

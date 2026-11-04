@@ -7,6 +7,6 @@ id = "generic-api-key"
 [[rules.allowlists]]
 description = "Four reviewed public SQLite C identifiers; source bytes are also pinned by SHA-256"
 condition = "AND"
-paths = ['''(^|[/\\])(sqlite3-ntqq\.c|sqlite3\.c)$''']
+paths = ['''(^|[/\\])(sqlite3-ntqq\.c|sqlite3\.c|sqlite3ext\.h)$''']
 regexTarget = "line"
 regexes = ['''\b(sqlite3_api->(column_bytes16|soft_heap_limit64|hard_heap_limit64)|FTS5_AVERAGES_ROWID)\b''']
