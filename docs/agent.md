@@ -35,3 +35,7 @@ $core='D:\QQArchive\application\backend\QQArchiveCore\QQArchiveCore.exe'
 GUI、Web UI 与 CLI 共用 Product 操作。活跃写入者通过运行实例绑定的持久请求箱串行执行维护，不要另开 SQLite 写入者。窗口关闭默认保留后台；app.quit 明确安全退出。
 
 HTTP 仅监听 127.0.0.1，Host/Origin/独立会话令牌与媒体票据必须保留。GET /api/status、/api/capabilities、/api/jobs、/api/job?id=...；POST /api/call（operation、arguments）、/api/cancel（id）。写请求需同源 Origin 和 X-QQ-Token，令牌从本机同源引导取得，不放入 URL、日志或仓库。系统通知领取仅限原生监听器，普通浏览状态不会消耗通知。
+
+## 滚动仓库
+
+`repository.status` 返回保留点、固定点、是否已启用滚动管理及占用口径；`repository.compact` 通过唯一写入者重建、全文件验证并安全切换仓库；`repository.recover` 恢复中断的切换。三项均接受可选的 repository，缺省使用状态目录旁的 backup-repository。整理可通过既有任务取消接口取消，失败保留原仓。详细策略和空间要求见 [仓库说明](repository.md)。

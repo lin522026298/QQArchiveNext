@@ -17,6 +17,7 @@ from .config import inside,load
 from .history import package_files,sha_file,cas_digest
 from .materialize import atomic_json
 from .catalog import canonical
+from .repository_gc import guarded
 
 SCHEMA='qq-next-backup-point/3'
 
@@ -136,6 +137,7 @@ def blob_data(repo,entry):
         while block:=stream.read(8*1024**2):yield block
 
 
+@guarded()
 def export(repo,target,*,identity=None,cancelled=lambda:False,application=None):
     """A fixed portable recovery folder; no live database is copied by shutil."""
     from .backup import read_point,point_files,sqlite_snapshot

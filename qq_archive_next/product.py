@@ -37,6 +37,9 @@ OPERATIONS = {
     'backups': '备份点列表与完整性边界',
     'backup.pin': '固定或取消固定已有备份点',
     'backup.verify': '重建并哈希备份点内的每个文件',
+    'repository.status': '滚动保留策略、固定点与待退役点统计',
+    'repository.compact': '验证并重建仓库，回收过期点的无引用数据',
+    'repository.recover': '恢复意外中断的仓库切换；保留旧仓',
     'restore': '恢复至新目录；默认全语义验证',
     'export-portable': '导出含程序和资料的完整迁移包',
     'settings': '读取或修改检查间隔与自动归档、备份设置',
@@ -74,6 +77,8 @@ def capabilities():
           'reuse_immutable':'restore only; optional same-volume immutable hardlinks; default false',
           'file_check_only':'restore only; skips semantic verification; default false'},
         'settings':{'settings':'poll_seconds, capture_seconds, full_verify_seconds, media_seconds, backup_seconds, auto_capture, auto_backup'},
+        'repository.status/compact/recover':{'repository':'absolute path; defaults to sibling backup-repository',
+          'retention':'two successful recent points plus all pinned points; weekly verified compaction'},
       },'safety':{'network':'loopback only','restore':'new directory only','backup':'includes all frozen originals and source keys for unified archives',
         'ordinary_folder_copy':'portable, no absolute dependency on the original PC','credentials':'never returned by the API'}}
 
@@ -280,8 +285,12 @@ class Product:
             from .guard import WriterLock
             with WriterLock(root):write_settings(root,{'auto_capture':False})
             return {'running':False,'state':'stopped'}
-        if operation in ('capture','media.scan','verify','backup'):
-            command='media' if operation=='media.scan' else operation
+        if operation=='repository.status':
+            from .repository_gc import status
+            return status(repo,cancelled=cancelled) if repo.exists() else {'points':0,'expired':0,'keep':[],'pinned':[],
+              'policy':{'recent':2,'compact_days':7},'state':'not_created'}
+        if operation in ('capture','media.scan','verify','backup','repository.compact','repository.recover'):
+            command={'media.scan':'media','repository.compact':'compact','repository.recover':'recover'}.get(operation,operation)
             options={'repository':str(repo),'include_keys':bool(args.get('include_keys')),'pin':bool(args.get('pin')),
               'full':bool(args.get('full')),'media':not bool(args.get('no_media'))}
             if runtime(root):return request_writer(root,command,options,cancelled)
@@ -301,17 +310,19 @@ class Product:
             return receipt['result']
         if operation=='backups':
             from .backup import repository,read_point
+            from .repository_gc import lease
             if not repo.exists():return {'repository':str(repo),'points':[]}
-            repo=repository(repo)
-            refs=json.loads((repo/'refs.json').read_text(encoding='utf-8')) if (repo/'refs.json').exists() else {'recent':[],'pinned':[]}
-            values=[]
-            for path in sorted((repo/'points').glob('*.json'),key=lambda p:p.stat().st_mtime,reverse=True):
-                if cancelled():raise InterruptedError('listing cancelled')
-                _,point=read_point(repo,path.stem);body=point['body'];files=body['files']
-                values.append({'id':point['id'],'created':point['created'],'schema':body['schema'],
-                  'files':files.get('count',len(files)),'logical_bytes':files.get('logical_bytes'),
-                  'pinned':point['id'] in refs['pinned'],'complete_originals':bool(body.get('history_included')),
-                  'includes_source_keys':body.get('includes_source_keys',False)})
+            with lease(repo,cancelled=cancelled):
+                repo=repository(repo)
+                refs=json.loads((repo/'refs.json').read_text(encoding='utf-8')) if (repo/'refs.json').exists() else {'recent':[],'pinned':[]}
+                values=[]
+                for path in sorted((repo/'points').glob('*.json'),key=lambda p:p.stat().st_mtime,reverse=True):
+                    if cancelled():raise InterruptedError('listing cancelled')
+                    _,point=read_point(repo,path.stem);body=point['body'];files=body['files']
+                    values.append({'id':point['id'],'created':point['created'],'schema':body['schema'],
+                      'files':files.get('count',len(files)),'logical_bytes':files.get('logical_bytes'),
+                      'pinned':point['id'] in refs['pinned'],'complete_originals':bool(body.get('history_included')),
+                      'includes_source_keys':body.get('includes_source_keys',False)})
             return {'repository':str(repo),'points':values}
         if operation=='backup.pin':
             from .backup import read_point
@@ -336,6 +347,10 @@ class Product:
         raise ValueError('unsupported operation')
 
     def _pin(self,repo,args):
+        from .repository_gc import lease
+        with lease(repo,write=True):return self._pin_locked(repo,args)
+
+    def _pin_locked(self,repo,args):
         from .backup import read_point
         repo,point=read_point(repo,args.get('point'))
         refs=json.loads((repo/'refs.json').read_text(encoding='utf-8'))

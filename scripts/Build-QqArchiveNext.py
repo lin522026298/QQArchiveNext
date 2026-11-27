@@ -60,6 +60,7 @@ def main():
     subprocess.run(command,cwd=ROOT,env=environment,check=True)
     (dist/'使用说明.md').write_text((ROOT/'docs/usage.md').read_text(encoding='utf-8').replace('(agent.md)','(GUI与Agent使用说明.md)'),encoding='utf-8')
     shutil.copyfile(ROOT/'docs/agent.md',dist/'GUI与Agent使用说明.md')
+    shutil.copyfile(ROOT/'docs/repository.md',dist/'仓库整理说明.md')
     shutil.copyfile(ROOT/'scripts/Configure-QQArchive.ps1',dist/'Configure-QQArchive.ps1')
     shutil.copyfile(ROOT/'LICENSE',dist/'LICENSE')
     shutil.copyfile(ROOT/'qq_archive_next/ORIGIN.md',dist/'第三方来源.md')
@@ -80,7 +81,7 @@ def main():
                 path=distribution.locate_file(relative)
                 if path.is_file():
                     target=licenses/name/Path(*relative.parts[1:]);target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
-    metadata={'schema':'qq-next-release/1','git_revision':revision,'product_version':'1.0.0','features':['portable_assistant','quiet_important_notices','unified_agent'],
+    metadata={'schema':'qq-next-release/1','git_revision':revision,'product_version':'1.1.0','features':['portable_assistant','quiet_important_notices','unified_agent','rolling_repository','verified_compaction'],
       'python':sys.version,'dependencies':versions,
       'native_runtime':json.loads((native/'runtime.json').read_text(encoding='utf-8')),'files':[]}
     for path in sorted(dist.rglob('*')):

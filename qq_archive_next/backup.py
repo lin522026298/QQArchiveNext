@@ -1,6 +1,8 @@
 """Append-only chunk repository, committed points, and independent restore.
 
-No automatic garbage collection. A restore always creates a new directory.
+Rolling retention keeps two successful points plus all pinned points. Shared
+payloads are reclaimed through a checked replacement, never by block deletion.
+A restore always creates a new directory.
 The caller serializes backup with the state writer using WriterLock.
 """
 from __future__ import annotations
@@ -16,6 +18,7 @@ from pathlib import Path
 from .catalog import Catalog,canonical
 from .config import load,inside
 from .materialize import atomic_json
+from .repository_gc import guarded
 
 CHUNK=4*1024**2
 SCHEMA='qq-next-backup-point/2'
@@ -29,6 +32,8 @@ def repository(path,*,create=False):
         if not create:raise FileNotFoundError('backup repository absent')
         path.mkdir(parents=True)
         atomic_json(path/'OWNER.json',{'schema':'qq-next-backup-repository/1','id':uuid.uuid4().hex})
+        from .repository_gc import policy
+        atomic_json(path/'RETENTION.json',policy(path))
     owner=json.loads((path/'OWNER.json').read_text(encoding='utf-8'))
     if owner.get('schema')!='qq-next-backup-repository/1':raise ValueError('not an owned backup repository')
     return path
@@ -132,6 +137,14 @@ def create_legacy(root,repo,*,include_keys=False,pin=False,cancelled=lambda:Fals
 
 
 def create(root,repo,*,include_keys=False,pin=False,cancelled=lambda:False):
+    from .repository_gc import lease,recover,after_backup
+    recover(repo)
+    with lease(repo,write=True,cancelled=cancelled):
+        result=_create(root,repo,include_keys=include_keys,pin=pin,cancelled=cancelled)
+        return after_backup(repo,result,cancelled=cancelled)
+
+
+def _create(root,repo,*,include_keys=False,pin=False,cancelled=lambda:False):
     from .backup_blocks import Pack
     root,config=load(root);repo=repository(repo,create=True)
     if config['schema']=='qq-next-config/2':
@@ -203,6 +216,7 @@ def create(root,repo,*,include_keys=False,pin=False,cancelled=lambda:False):
     finally:pack.close()
 
 
+@guarded()
 def read_point(repo,identity=None):
     repo=repository(repo)
     if (repo/'INCOMPLETE.json').exists():raise ValueError('portable export is incomplete')
@@ -223,6 +237,7 @@ def point_files(repo,point,*,cancelled=lambda:False):
     finally:pack.close()
 
 
+@guarded()
 def verify_point(repo,identity=None,*,cancelled=lambda:False):
     """Reconstruct/hash every file without allocating another full restored copy."""
     repo,point=read_point(repo,identity)
@@ -249,6 +264,7 @@ def verify_point(repo,identity=None,*,cancelled=lambda:False):
         if pack:pack.close()
 
 
+@guarded()
 def restore(repo,target,*,identity=None,deep=True,cancelled=lambda:False,hardlink_immutable=False):
     repo,point=read_point(repo,identity);target=Path(target).resolve()
     if target.exists():raise ValueError('restore requires a new destination')

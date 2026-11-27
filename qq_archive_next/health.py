@@ -13,7 +13,7 @@ from .config import inside
 from .materialize import atomic_json
 
 _lock=RLock()
-IMPORTANT_OPERATIONS={'backup','verify','restore','backup.verify','export-portable','archive.start'}
+IMPORTANT_OPERATIONS={'backup','verify','restore','backup.verify','export-portable','archive.start','repository.compact','repository.recover'}
 RULES={
  'input':('请检查输入','目标目录或操作参数需要调整，未覆盖已有资料。','查看任务中的具体提示，选择新的目标目录或修正参数。',False),
  'input_busy':('输入正在变化','QQ 正在写入或检查点切换，本次切面未提交，稍后自动重试。','等待自动重试；需要时点击重新检查。',False),

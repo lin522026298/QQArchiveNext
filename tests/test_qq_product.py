@@ -85,6 +85,21 @@ class ProductTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.product.execute('settings',{'settings':value})
         self.assertEqual((self.root/'config.private.json').read_bytes(),before)
 
+    def test_repository_maintenance_uses_the_shared_writer_and_reader(self):
+        repo=self.fixture.root/'repository';args={'repository':str(repo)}
+        point=self.product.execute('backup',args|{'pin':True})
+        self.assertIn('repository.compact',capabilities()['operations'])
+        self.assertEqual(self.product.execute('repository.status',args)['keep'],[point['id']])
+        self.assertEqual(self.product.execute('repository.compact',args)['state'],'committed')
+        self.assertEqual(self.product.execute('repository.recover',args)['state'],'clean')
+        self.assertEqual(self.product.execute('backup.verify',args)['point'],point['id'])
+
+    def test_unchanged_archive_still_schedules_due_repository_compaction(self):
+        coordinator=Coordinator(self.root);coordinator.config['auto_backup']=True
+        atomic_json(self.root/'backup_receipt.private.json',{'revision':coordinator.archive_revision(self.fixture.catalog)})
+        with patch('qq_archive_next.repository_gc.due',return_value=True):coordinator.automatic_backup(self.fixture.catalog)
+        self.assertEqual(coordinator.commands.get_nowait()[0],'compact')
+
     def test_program_only_upgrade_schedules_complete_backup(self):
         manifest=self.root/'application/release_verification.json';manifest.write_text('old bound release',encoding='utf-8')
         coordinator=Coordinator(self.root);coordinator.config['auto_backup']=True

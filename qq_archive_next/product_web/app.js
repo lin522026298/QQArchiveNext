@@ -176,6 +176,7 @@ async function inspectMedia(item,voice){
 }
 function backupArgs(){return {repository:$('repository').value.trim()||undefined,point:$('point').value||undefined};}
 async function listBackups(){
+  const maintenance=await call('repository.status',backupArgs());$('repository-policy').textContent=(maintenance.rolling_enabled===false?'旧仓尚未启用滚动淘汰，请先固定需长期保留的点，再执行验证整理。':'')+'默认保留最近 '+maintenance.policy.recent+' 个成功点和全部固定点；每 '+maintenance.policy.compact_days+' 天自动验证整理。当前 '+number(maintenance.points)+' 个点，'+number(maintenance.expired)+' 个待退役。整理需临时空间，可在任务中取消。';
   const result=await call('backups',backupArgs());const selected=$('point').value;$('point').replaceChildren();const latest=el('option','最新备份点');latest.value='';$('point').append(latest);$('backup-points').replaceChildren();
   for(const item of result.points){
     const option=el('option',date(item.created)+' · '+item.id.slice(0,12)+(item.pinned?' · 已固定':''));option.value=item.id;$('point').append(option);
@@ -213,6 +214,8 @@ $('search').addEventListener('click',attempt(search));$('search-query').addEvent
 $('search-prev').addEventListener('click',attempt(async()=>{searchOffset=Math.max(0,searchOffset-100);await search();}));$('search-next').addEventListener('click',attempt(async()=>{searchOffset+=100;await search();}));
 $('close-inspector').addEventListener('click',()=>$('inspector').close());
 $('make-backup').addEventListener('click',attempt(async()=>{await call('backup',{...backupArgs(),pin:$('pin-new').checked});await listBackups();}));$('list-backups').addEventListener('click',attempt(listBackups));
+$('compact-repository').addEventListener('click',attempt(async()=>{const result=await call('repository.compact',backupArgs());await listBackups();openInspector('仓库整理完成').append(el('pre',JSON.stringify(result,null,2)));}));
+$('recover-repository').addEventListener('click',attempt(async()=>{const result=await call('repository.recover',backupArgs());await listBackups();openInspector('仓库切换恢复').append(el('pre',JSON.stringify(result,null,2)));}));
 $('verify-backup').addEventListener('click',attempt(async()=>{const result=await call('backup.verify',backupArgs());openInspector('备份验证完成').append(el('pre',JSON.stringify(result,null,2)));}));
 for(const operation of ['restore','export-portable'])$(operation).addEventListener('click',attempt(async()=>{const destination=$('destination').value.trim();if(!destination)throw Error('请填写新的目标目录');const result=await call(operation,{...backupArgs(),destination,reuse_immutable:$('reuse-immutable').checked});openInspector(operation==='restore'?'恢复与验证完成':'完整迁移包已导出').append(el('pre',JSON.stringify(result,null,2)));}));
 $('refresh-jobs').addEventListener('click',attempt(refresh));$('full-capture').addEventListener('click',attempt(()=>call('capture',{full:true})));$('full-media').addEventListener('click',attempt(()=>call('media.scan',{full:true})));

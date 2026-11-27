@@ -110,7 +110,7 @@ class Coordinator:
                       'finished':time.time(),'error':'上一次归档实例已结束，操作结果未确认；请先核对已有备份点或任务结果再重试。'})
                     path.unlink(missing_ok=True);(self.root/'requests/cancel'/path.stem).unlink(missing_ok=True)
                     continue
-                if request.get('command') not in ('backup','verify','capture','media','settings','pin','retry'):continue
+                if request.get('command') not in ('backup','verify','capture','media','settings','pin','retry','compact','recover'):continue
                 options=request.get('options',{})
                 if not isinstance(options,dict):continue
                 self.pending_requests.add(path.stem)
@@ -195,6 +195,9 @@ class Coordinator:
                 from .backup import create
                 result=create(self.root,options['repository'],include_keys=options.get('include_keys',False),pin=options.get('pin',False),cancelled=self.cancelled)
                 atomic_json(self.root/'backup_receipt.private.json',{'revision':self.archive_revision(catalog),'point':result['id'],'finished':time.time()})
+                if result.get('repository_maintenance',{}).get('state')=='error':
+                    from .health import outcome
+                    outcome(self.root,'repository.compact','failed',error=result['repository_maintenance']['error'])
             elif command=='verify':
                 result=catalog.verify(cancelled=self.cancelled,progress=progress)
                 if self.config['schema']=='qq-next-config/2':
@@ -220,6 +223,12 @@ class Coordinator:
             elif command=='pin':
                 from .product import Product
                 result=Product(self.root)._pin(Path(options['repository']),options)
+            elif command=='compact':
+                from .repository_gc import compact
+                result=compact(options['repository'],cancelled=self.cancelled,progress=progress)
+            elif command=='recover':
+                from .repository_gc import recover
+                result=recover(options['repository'])
             elif command=='retry':
                 identity=options.get('source_id')
                 if identity not in {s['id'] for s in self.config['sources']}:raise ValueError('unknown source')
@@ -268,11 +277,17 @@ class Coordinator:
         revision=self.archive_revision(catalog)
         try:previous=json.loads((self.root/'backup_receipt.private.json').read_text(encoding='utf-8'))
         except (OSError,ValueError):previous={}
-        if previous.get('revision')==revision:return
+        if previous.get('revision')==revision:
+            from .repository_gc import due
+            repo=self.root.parent/'backup-repository'
+            if due(repo):self.commands.put(('compact',{'repository':repo}))
+            return
         self.commands.put(('backup',{'repository':self.root.parent/'backup-repository'}))
 
     def run(self,*,once=False,force=False,media=True,capture_sources=True):
         with WriterLock(self.root):
+            from .repository_gc import recover
+            recover(self.root.parent/'backup-repository')
             try:return self._run(once=once,force=force,media=media,capture_sources=capture_sources)
             except InterruptedError:raise
             except Exception as exc:
