@@ -6,7 +6,7 @@ Windows QQ 聊天归档工具：本地持续采集、历史记录统一浏览、
 
 ## 下载与首次使用
 
-从 [Releases](https://github.com/lin522026298/QQArchiveNext/releases) 下载 **QQArchiveNext-1.1.0-Windows-x64.zip** 和 SHA256SUMS.txt，核对 SHA-256 后完整解压。需要 Windows x64、.NET Framework 4.8 和 Microsoft WebView2 Runtime；运行便携程序不需要安装 Python。
+从 [Releases](https://github.com/lin522026298/QQArchiveNext/releases) 下载 **QQArchiveNext-1.1.1-Windows-x64.zip** 和 SHA256SUMS.txt，核对 SHA-256 后完整解压。需要 Windows x64、.NET Framework 4.8 和 Microsoft WebView2 Runtime；运行便携程序不需要安装 Python。
 
 **程序包不含任何聊天、账号数据或源密钥。** 双击 QQArchiveNext.exe，可选择已有档案或自己的完整迁移包。已有迁移包的 Start.cmd 可打开图形验证、恢复助手。恢复写新目录，默认执行完整文件和记录校验。
 
@@ -42,3 +42,5 @@ GPL-3.0。第三方许可和对应源码随包保留，详见 [第三方来源](
 ## 1.1.0：滚动恢复点
 
 新建仓库默认只保留最近两个成功点和全部固定点，存在退役数据时每七天验证整理一次。需要长期留存的点请先固定。旧仓须显式成功执行一次验证整理才启用滚动保留，安装升级本身不会淘汰旧点。失败或取消的备份保留原可用点。详见 [仓库整理](docs/repository.md)。GUI、CLI 和 Agent 共用 `repository.status`、`repository.compact`、`repository.recover`；切换有落盘日志、互斥锁和崩溃回退，原始资料、版本及附件关联保留。
+
+1.1.1 补齐迁移包与恢复目录的整理保护、长结构校验的取消检查点和便携文档链接；独立新仓先顺序写入，再一次建立摘要索引，减少临时写入，发布前仍执行完整校验和落盘。

@@ -1,5 +1,6 @@
 """Portable entry points; preserve the original point's application version."""
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -14,12 +15,14 @@ def supports_assistant(folder):
 
 def recovery_tool(target,application=None):
     target=Path(target)
-    if supports_assistant(target/'application'):return 'application'
     if application is None and getattr(sys,'frozen',False):application=Path(sys.executable).parents[2]
     if application is None:return 'application'
     application=Path(application).resolve(strict=True)
     if not supports_assistant(application):return 'application'
     metadata=json.loads((application/'release_verification.json').read_text(encoding='utf-8'))
+    try:archived=json.loads((target/'application/release_verification.json').read_text(encoding='utf-8'))
+    except (OSError,ValueError):archived=None
+    if archived==metadata:return 'application'
     entries={item['path']:item for item in metadata['files']}
     destination=target/'recovery-tool';destination.mkdir()
     for name in [*entries,'release_verification.json']:
@@ -29,6 +32,8 @@ def recovery_tool(target,application=None):
         if name in entries and (digest,size)!=(entries[name]['sha256'],entries[name]['bytes']):raise ValueError('recovery program hash differs')
         copied.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,copied)
         if file_hash(copied)!=digest:raise ValueError('recovery program copy differs')
+        with copied.open('r+b') as stream:
+            os.fsync(stream.fileno())
     return 'recovery-tool'
 
 

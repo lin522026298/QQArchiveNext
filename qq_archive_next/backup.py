@@ -138,7 +138,7 @@ def create_legacy(root,repo,*,include_keys=False,pin=False,cancelled=lambda:Fals
 
 def create(root,repo,*,include_keys=False,pin=False,cancelled=lambda:False):
     from .repository_gc import lease,recover,after_backup
-    recover(repo)
+    recover(repo,cancelled=cancelled)
     with lease(repo,write=True,cancelled=cancelled):
         result=_create(root,repo,include_keys=include_keys,pin=pin,cancelled=cancelled)
         return after_backup(repo,result,cancelled=cancelled)

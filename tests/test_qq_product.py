@@ -100,6 +100,15 @@ class ProductTests(unittest.TestCase):
         with patch('qq_archive_next.repository_gc.due',return_value=True):coordinator.automatic_backup(self.fixture.catalog)
         self.assertEqual(coordinator.commands.get_nowait()[0],'compact')
 
+    def test_first_backup_failure_keeps_repository_panel_readable_and_retryable(self):
+        repo=self.fixture.root/'repository';args={'repository':str(repo)}
+        with patch('qq_archive_next.backup_blocks.Pack.file',side_effect=OSError('synthetic first-backup failure')):
+            with self.assertRaises(ValueError):self.product.execute('backup',args)
+        self.assertEqual(self.product.execute('repository.status',args)['state'],'no_committed_point')
+        self.assertEqual(self.product.execute('backups',args)['points'],[])
+        point=self.product.execute('backup',args)
+        self.assertEqual(self.product.execute('backup.verify',args)['point'],point['id'])
+
     def test_program_only_upgrade_schedules_complete_backup(self):
         manifest=self.root/'application/release_verification.json';manifest.write_text('old bound release',encoding='utf-8')
         coordinator=Coordinator(self.root);coordinator.config['auto_backup']=True

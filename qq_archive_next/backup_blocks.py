@@ -31,10 +31,12 @@ def ref(row,span=None):
 
 
 class Pack:
-    def __init__(self,repo,*,readonly=False,cancelled=lambda:False,legacy_repo=None):
+    def __init__(self,repo,*,readonly=False,cancelled=lambda:False,legacy_repo=None,bulk_build=False):
         self.repo=Path(repo);self.path=self.repo/'blocks.sqlite';self.readonly=readonly;self.cancelled=cancelled
         self.legacy_repo=Path(legacy_repo) if legacy_repo else self.repo
         existed=self.path.exists();self.new_bytes=self.added=self.pending=0
+        if bulk_build and (readonly or existed or not (self.repo/'INCOMPLETE.json').is_file()):
+            raise ValueError('bulk construction requires a fresh incomplete generation')
         self.db=sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True,timeout=30) if readonly else sqlite3.connect(self.path,timeout=30)
         self.db.row_factory=sqlite3.Row
         if existed or readonly:
@@ -43,12 +45,17 @@ class Pack:
             if not schema or schema[0]!=SCHEMA:self.db.close();raise ValueError('not an owned backup block pack')
         if not readonly:
             self.db.executescript('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA cache_size=-65536;')
-            self.db.executescript('''CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID;
-              CREATE TABLE IF NOT EXISTS block(id INTEGER PRIMARY KEY,digest BLOB NOT NULL UNIQUE,kind INTEGER NOT NULL,
+            unique='' if bulk_build else ' UNIQUE'
+            self.db.executescript(f'''CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID;
+              CREATE TABLE IF NOT EXISTS block(id INTEGER PRIMARY KEY,digest BLOB NOT NULL{unique},kind INTEGER NOT NULL,
                 byte_count INTEGER NOT NULL,codec INTEGER NOT NULL,data BLOB NOT NULL);
               CREATE TRIGGER IF NOT EXISTS block_no_update BEFORE UPDATE ON block BEGIN SELECT RAISE(ABORT,'immutable backup block');END;
               CREATE TRIGGER IF NOT EXISTS block_no_delete BEFORE DELETE ON block BEGIN SELECT RAISE(ABORT,'immutable backup block');END;''')
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('schema',?)",(SCHEMA,));self.db.commit()
+            if bulk_build:
+                # Disposable until the final flush and INCOMPLETE removal. Build
+                # the digest index once after sequential row-ID insertion.
+                self.db.executescript('PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;')
         else:self.db.execute('PRAGMA query_only=ON')
 
     def close(self):

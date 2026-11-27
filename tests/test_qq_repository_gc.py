@@ -119,6 +119,69 @@ class RepositoryGcTests(unittest.TestCase):
         self.assertEqual(list(self.base.glob('.repository.compact-*')),[])
         backup.verify_point(self.repo)
 
+    def test_portable_bundle_or_unknown_root_is_never_replaced(self):
+        self.point(1)
+        from qq_archive_next.backup_unified import export
+        portable=self.base/'portable';export(self.repo,portable)
+        before=(portable/'refs.json').read_bytes()
+        with self.assertRaisesRegex(ValueError,'dedicated warehouse'):gc.compact(portable)
+        self.assertEqual((portable/'refs.json').read_bytes(),before)
+        self.assertTrue((portable/'Open.cmd').is_file());backup.verify_point(portable)
+        candidate,_=self.rebuild();(self.repo/'Recovered').mkdir()
+        with self.assertRaisesRegex(ValueError,'dedicated warehouse'):gc.switch(self.repo,candidate)
+        self.assertTrue(self.repo.exists());self.assertTrue(candidate.exists())
+
+    def test_cancel_at_large_pack_check_preserves_source_and_cleans_candidate(self):
+        self.point(1);cancel=threading.Event();before=(self.repo/'refs.json').read_bytes()
+        def progress(phase,count):
+            if phase=='pack_integrity':cancel.set()
+        with self.assertRaises(InterruptedError):gc.compact(self.repo,cancelled=cancel.is_set,progress=progress)
+        self.assertEqual((self.repo/'refs.json').read_bytes(),before)
+        self.assertEqual(list(self.base.glob('.repository.compact-*')),[])
+        backup.verify_point(self.repo)
+
+    def test_cleanup_interruption_resumes_after_a_descriptor_was_removed(self):
+        identity=self.point(1);candidate,_=self.rebuild();switched=gc.switch(self.repo,candidate)
+        old=Path(switched['old']);descriptor=old/'points'/(identity+'.json')
+        with self.assertRaises(InterruptedError):gc.discard_old(self.repo,old,cancelled=lambda:not descriptor.exists())
+        self.assertTrue((old/'OWNER.json').exists())
+        result=gc.recover(self.repo);self.assertTrue(result['cleanup']['resumed'])
+        self.assertFalse(old.exists());backup.verify_point(self.repo)
+
+    def test_committed_verified_generation_cleanup_survives_a_crash(self):
+        self.point(1);candidate,_=self.rebuild()
+        def crash(phase):
+            if phase=='committed':raise OSError('simulated postcommit crash')
+        with self.assertRaises(OSError):gc.switch(self.repo,candidate,checkpoint=crash,retire_after_verification=True)
+        result=gc.recover(self.repo);self.assertEqual(result['state'],'committed')
+        self.assertFalse(Path(result['old']).exists());backup.verify_point(self.repo)
+
+    def test_unaccepted_old_generation_is_preserved_on_restart(self):
+        self.point(1);candidate,_=self.rebuild();switched=gc.switch(self.repo,candidate)
+        result=gc.recover(self.repo);self.assertTrue(result['requires_acceptance'])
+        self.assertTrue(Path(switched['old']).exists());backup.verify_point(self.repo)
+
+    def test_old_assistant_is_preserved_while_portable_entries_use_current_tool(self):
+        from qq_archive_next.portable import recovery_tool,launchers
+        target=self.base/'portable-tools';old=target/'application';current=self.base/'current-tool'
+        old.mkdir(parents=True);current.mkdir()
+        def program(folder,payload,revision):
+            path=folder/'QQArchiveNext.exe';path.write_bytes(payload)
+            atomic_json(folder/'release_verification.json',{'schema':'qq-next-release/1','features':['portable_assistant'],
+              'git_revision':revision,'files':[{'path':'QQArchiveNext.exe','bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest()}]})
+        program(old,b'archived assistant','a'*40);program(current,b'current assistant','b'*40)
+        before=(old/'QQArchiveNext.exe').read_bytes()
+        self.assertEqual(recovery_tool(target,current),'recovery-tool')
+        self.assertEqual((old/'QQArchiveNext.exe').read_bytes(),before)
+        self.assertEqual((target/'recovery-tool/QQArchiveNext.exe').read_bytes(),b'current assistant')
+        launchers(target,'recovery-tool')
+        self.assertIn(b'recovery-tool\\QQArchiveNext.exe',(target/'Open.cmd').read_bytes())
+        same=self.base/'same-tool';(same/'application').mkdir(parents=True)
+        import shutil
+        for path in current.iterdir():shutil.copyfile(path,same/'application'/path.name)
+        self.assertEqual(recovery_tool(same,current),'application')
+        self.assertFalse((same/'recovery-tool').exists())
+
     def test_weekly_automatic_compaction_and_new_backup_after_switch(self):
         self.point(1,pin=True);self.point(2)
         policy=gc.policy(self.repo);policy['last_compaction']=time.time()-8*86400;atomic_json(self.repo/'RETENTION.json',policy)

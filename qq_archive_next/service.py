@@ -228,7 +228,7 @@ class Coordinator:
                 result=compact(options['repository'],cancelled=self.cancelled,progress=progress)
             elif command=='recover':
                 from .repository_gc import recover
-                result=recover(options['repository'])
+                result=recover(options['repository'],cancelled=self.cancelled)
             elif command=='retry':
                 identity=options.get('source_id')
                 if identity not in {s['id'] for s in self.config['sources']}:raise ValueError('unknown source')
@@ -287,7 +287,7 @@ class Coordinator:
     def run(self,*,once=False,force=False,media=True,capture_sources=True):
         with WriterLock(self.root):
             from .repository_gc import recover
-            recover(self.root.parent/'backup-repository')
+            recover(self.root.parent/'backup-repository',cancelled=self.cancelled)
             try:return self._run(once=once,force=force,media=media,capture_sources=capture_sources)
             except InterruptedError:raise
             except Exception as exc:

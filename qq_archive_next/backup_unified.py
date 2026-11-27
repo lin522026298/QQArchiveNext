@@ -46,6 +46,7 @@ def store_blob(repo,path,*,expected=None,link=False,cancelled=lambda:False):
                 shutil.copyfile(path,temporary)
                 if sha_file(temporary,cancelled)!=(size,digest):raise ValueError('backup blob copy differs')
                 added=size
+                with temporary.open('r+b') as stream:os.fsync(stream.fileno())
             os.replace(temporary,destination)
         finally:temporary.unlink(missing_ok=True)
     after=path.stat()

@@ -39,7 +39,7 @@ OPERATIONS = {
     'backup.verify': '重建并哈希备份点内的每个文件',
     'repository.status': '滚动保留策略、固定点与待退役点统计',
     'repository.compact': '验证并重建仓库，回收过期点的无引用数据',
-    'repository.recover': '恢复意外中断的仓库切换；保留旧仓',
+    'repository.recover': '恢复中断的切换及已获准退役的旧仓清理',
     'restore': '恢复至新目录；默认全语义验证',
     'export-portable': '导出含程序和资料的完整迁移包',
     'settings': '读取或修改检查间隔与自动归档、备份设置',
@@ -290,6 +290,11 @@ class Product:
             return status(repo,cancelled=cancelled) if repo.exists() else {'points':0,'expired':0,'keep':[],'pinned':[],
               'policy':{'recent':2,'compact_days':7},'state':'not_created'}
         if operation in ('capture','media.scan','verify','backup','repository.compact','repository.recover'):
+            if operation=='repository.compact':
+                protected=[root]+[Path(s['database']).resolve().parent for s in config['sources']]
+                protected+=[Path(s['media_root']).resolve() for s in config['sources'] if s.get('media_root')]
+                if any(repo.is_relative_to(p) or p.is_relative_to(repo) for p in protected):
+                    raise ValueError('repository maintenance overlaps the active state or a source')
             command={'media.scan':'media','repository.compact':'compact','repository.recover':'recover'}.get(operation,operation)
             options={'repository':str(repo),'include_keys':bool(args.get('include_keys')),'pin':bool(args.get('pin')),
               'full':bool(args.get('full')),'media':not bool(args.get('no_media'))}

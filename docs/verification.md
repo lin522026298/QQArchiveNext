@@ -9,7 +9,7 @@
 完整资料备份的范围以已提交的备份点为准。只保存工具成功观测过的本地记录；不承诺恢复未落盘、已消失或未被客户端保存的聊天。普通巡检检查全部候选路径并复用固定根目录解析，完整媒体哈希检查仍可单独执行。当前整机环境中的巡检耗时会变化，不能将某次受控对照中的约 30 秒视为固定保证。
 
 同卷冻结文件复用仍共享字节；跨卷普通复制夹具只证明独立文件恢复，不等于异地或另一实体电脑的全量验收。程序未签名，必须从本仓库 Release 下载并核对校验和。
-# 1.1.0 validation
+# 1.1.1 validation
 
-The staged public tree passed 114 tests, including rolling retention, pinned-point preservation, failed/cancelled backups, legacy external-slice independence, corruption handling, shared readers, interrupted generation switches, weekly maintenance and the shared GUI/Agent operations. The program package and anonymous download acceptance are recorded separately in the Release VERIFICATION.json. Tests use synthetic data; no private archive, account, key, path inventory or real message content is published.
+The staged public tree passed 122 tests, including rolling retention, pinned-point preservation, failed/cancelled backups, legacy external-slice independence, corruption handling, shared readers, interrupted generation switches, weekly maintenance and the shared GUI/Agent operations. The program package and anonymous download acceptance are recorded separately in the Release VERIFICATION.json. Tests use synthetic data; no private archive, account, key, path inventory or real message content is published.
 

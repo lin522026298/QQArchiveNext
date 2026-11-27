@@ -26,6 +26,11 @@ class BlockPackTests(unittest.TestCase):
         empty=self.root/'empty';empty.touch();entry=self.pack.file(empty,block_size=4096)
         self.assertEqual(b''.join(self.pack.data(entry['root'])),b'')
 
+    def test_bulk_build_cannot_change_an_existing_pack(self):
+        before=(self.repo/'blocks.sqlite').read_bytes()
+        with self.assertRaisesRegex(ValueError,'fresh incomplete'):Pack(self.repo,bulk_build=True)
+        self.assertEqual((self.repo/'blocks.sqlite').read_bytes(),before)
+
     def test_small_sqlite_edit_does_not_rewrite_megabyte_containers(self):
         path=self.root/'random.sqlite';db=sqlite3.connect(path);db.execute('CREATE TABLE evidence(id INTEGER PRIMARY KEY,payload BLOB)')
         generator=random.Random(20261103)

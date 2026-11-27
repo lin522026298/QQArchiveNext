@@ -3,7 +3,7 @@ const boot=window.QQ_BOOTSTRAP;
 delete window.QQ_BOOTSTRAP;
 const $=id=>document.getElementById(id);
 const titles={overview:'概览',chats:'聊天记录',backups:'备份与恢复',health:'状态与处理',jobs:'任务',settings:'设置',agent:'Agent 接口'};
-const labels={queued:'排队中',running:'运行中',completed:'已完成',cancelled:'已取消',failed:'失败',interrupted:'上次未完成',idle:'等待变化',capturing:'采集消息',media:'检查媒体',backup:'备份中',verify:'校验中',stopped:'已停止',retry:'等待重试',ok:'正常'};
+const labels={queued:'排队中',running:'运行中',completed:'已完成',cancelled:'已取消',failed:'失败',interrupted:'上次未完成',idle:'等待变化',capturing:'采集消息',media:'检查媒体',backup:'备份中',verify:'校验中',compact:'整理仓库',recover:'恢复仓库切换',stopped:'已停止',retry:'等待重试',ok:'正常'};
 let status={},accounts=[],conversations=[],current={type:'messages',conversation:null},page=[],searchOffset=0,lastSearch='',pending=new Set(),activeJobs=new Set(),refreshing=false,readGeneration=0,conversationGeneration=0;
 let healthKey='',jobsKey='';
 const el=(tag,text,cls)=>{const item=document.createElement(tag);if(text!==undefined)item.textContent=text;if(cls)item.className=cls;return item;};

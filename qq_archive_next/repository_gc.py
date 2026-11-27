@@ -117,11 +117,18 @@ def selection(repo):
 
 @guarded()
 def status(repo,*,cancelled=lambda:False):
+    from .backup import repository
+    repo=repository(repo)
+    if not (repo/'refs.json').exists():
+        return {'policy':policy(repo),'keep':[],'pinned':[],'recent':[],'rolling_enabled':(repo/'RETENTION.json').exists(),
+          'points':len(list((repo/'points').glob('*.json'))),'expired':0,'cleanup':None,'state':'no_committed_point',
+          'block_pack_bytes':(repo/'blocks.sqlite').stat().st_size if (repo/'blocks.sqlite').exists() else 0}
     refs,points=selection(repo);value=policy(repo)
     existing=sorted(p.stem for p in (Path(repo)/'points').glob('*.json'))
     keep={p['id'] for p in points}
     return {'policy':value,'keep':[p['id'] for p in points],'pinned':refs['pinned'],
       'rolling_enabled':(Path(repo)/'RETENTION.json').exists(),
+      'cleanup':json.loads((Path(repo)/'CLEANUP_RECEIPT.json').read_text(encoding='utf-8')) if (Path(repo)/'CLEANUP_RECEIPT.json').exists() else None,
       'recent':refs['recent'][:2],'points':len(existing),'expired':len(set(existing)-keep),
       'block_pack_bytes':(Path(repo)/'blocks.sqlite').stat().st_size if (Path(repo)/'blocks.sqlite').exists() else 0,
       'physical_reclaim':'requires a verified replacement; payload and filesystem allocation differ'}
@@ -220,17 +227,16 @@ def rebuild(repo,destination,*,cancelled=lambda:False,progress=lambda phase,coun
       'CREATE TABLE blob(digest TEXT PRIMARY KEY,bytes INTEGER NOT NULL) WITHOUT ROWID;'
       'CREATE TABLE chunk(digest TEXT PRIMARY KEY,bytes INTEGER NOT NULL) WITHOUT ROWID;')
     source=Pack(repo,readonly=True,cancelled=cancelled) if source_pack else None
-    copied=Pack(destination,cancelled=cancelled) if source_pack else None
-    upsert='''INSERT INTO wanted(id,kind,bytes,span,digest) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
-      digest=CASE WHEN wanted.kind=excluded.kind AND wanted.bytes=excluded.bytes AND wanted.span=excluded.span AND wanted.digest=excluded.digest
-      THEN wanted.digest ELSE NULL END'''
+    copied=Pack(destination,cancelled=cancelled,bulk_build=True) if source_pack else None
+    upsert='''INSERT INTO wanted(id,kind,bytes,span,digest) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET digest=NULL
+      WHERE wanted.kind!=excluded.kind OR wanted.bytes!=excluded.bytes OR wanted.span!=excluded.span OR wanted.digest!=excluded.digest'''
     def want(r):
         if r['kind'] not in (DATA,LIST,FILES,INDEX) or not isinstance(r['id'],int) or r['id']<=0:raise ValueError('invalid block reference')
         graph.execute(upsert,(r['id'],r['kind'],r['bytes'],r['span'],r['sha256']))
     def blob(digest,size,table):
         from .backup import object_path
         object_path(repo,digest)
-        graph.execute(f'INSERT INTO {table} VALUES(?,?) ON CONFLICT(digest) DO UPDATE SET bytes=CASE WHEN {table}.bytes=excluded.bytes THEN {table}.bytes ELSE NULL END',(digest,size))
+        graph.execute(f'INSERT INTO {table} VALUES(?,?) ON CONFLICT(digest) DO UPDATE SET bytes=NULL WHERE {table}.bytes!=excluded.bytes',(digest,size))
     started=time.time();files=logical=0;virtual_root=(destination/'_paths').resolve()
     try:
         for point in points:
@@ -290,7 +296,26 @@ def rebuild(repo,destination,*,cancelled=lambda:False,progress=lambda phase,coun
                 block_count+=1;payload_bytes+=len(encoded)
                 if block_count%8192==0:copied.commit();progress('payload_blocks',block_count)
             copied.commit()
-            if copied.db.execute('PRAGMA integrity_check').fetchone()[0]!='ok':raise ValueError('new pack integrity failure')
+            progress('pack_index',block_count)
+            if cancelled():raise InterruptedError('repository index build cancelled')
+            copied.db.set_progress_handler(lambda:int(cancelled()),100000)
+            try:
+                copied.db.execute('CREATE UNIQUE INDEX blocks_by_digest ON block(digest)');copied.commit()
+            except sqlite3.OperationalError:
+                if cancelled():raise InterruptedError('repository index build cancelled') from None
+                raise
+            finally:copied.db.set_progress_handler(None,0)
+            progress('pack_integrity',block_count)
+            if cancelled():raise InterruptedError('repository integrity check cancelled')
+            copied.db.set_progress_handler(lambda:int(cancelled()),100000)
+            try:
+                if copied.db.execute('PRAGMA integrity_check').fetchone()[0]!='ok':raise ValueError('new pack integrity failure')
+            except sqlite3.OperationalError:
+                if cancelled():raise InterruptedError('repository integrity check cancelled') from None
+                raise
+            finally:copied.db.set_progress_handler(None,0)
+            if cancelled():raise InterruptedError('repository integrity check cancelled')
+        progress('blobs',0)
         blob_count=blob_bytes=linked=0
         for digest,size in graph.execute('SELECT digest,bytes FROM blob ORDER BY digest'):
             if cancelled():raise InterruptedError('repository rebuild cancelled')
@@ -301,6 +326,7 @@ def rebuild(repo,destination,*,cancelled=lambda:False,progress=lambda phase,coun
             except OSError:
                 shutil.copyfile(origin,target)
                 if sha_file(target,cancelled)!=(size,digest):raise ValueError('copied blob hash failure')
+                with target.open('r+b') as stream:os.fsync(stream.fileno())
             if before!=_fingerprint(origin):raise ValueError('source blob changed during rebuild')
             blob_count+=1;blob_bytes+=size
             if blob_count%512==0:progress('blobs',blob_count)
@@ -316,7 +342,8 @@ def rebuild(repo,destination,*,cancelled=lambda:False,progress=lambda phase,coun
         descriptor_hashes={}
         for point in points:
             name=point['id']+'.json';raw=(repo/'points'/name).read_bytes()
-            read_point(repo,point['id']);(destination/'points'/name).write_bytes(raw)
+            read_point(repo,point['id'])
+            with (destination/'points'/name).open('xb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
             descriptor_hashes[point['id']]=hashlib.sha256(raw).hexdigest()
         atomic_json(destination/'refs.json',dict(refs,recent=refs['recent'][:2]))
         retired=[]
@@ -346,6 +373,9 @@ def rebuild(repo,destination,*,cancelled=lambda:False,progress=lambda phase,coun
         if source:source.close()
         if copied:
             copied.db.execute('PRAGMA wal_checkpoint(TRUNCATE)');copied.db.execute('PRAGMA journal_mode=DELETE');copied.close()
+    for name in ('blocks.sqlite','OWNER.json'):
+        if (destination/name).is_file():
+            with (destination/name).open('r+b') as stream:os.fsync(stream.fileno())
     (destination/'reachability.sqlite').unlink()
     (destination/'INCOMPLETE.json').unlink()
     progress('complete',files)
@@ -353,6 +383,19 @@ def rebuild(repo,destination,*,cancelled=lambda:False,progress=lambda phase,coun
 
 
 def _journal(repo):return repo.parent/('.'+repo.name+'.swap.json')
+
+
+def _dedicated(repo):
+    """Only a dedicated payload warehouse can be replaced, never a portable app."""
+    repo=_safe(repo)
+    files={'OWNER.json','refs.json','blocks.sqlite','blocks.sqlite-wal','blocks.sqlite-shm',
+           'RETENTION.json','RETIREMENT_RECEIPT.json','COMPACTION_RECEIPT.json','CLEANUP_RECEIPT.json'}
+    for path in repo.iterdir():
+        _safe(path)
+        if path.is_file() and path.name in files:continue
+        if path.is_dir() and path.name in ('points','blobs','chunks'):continue
+        if path.is_dir() and path.name.startswith('staging-') and len(path.name)==40 and all(c in '0123456789abcdef' for c in path.name[8:]):continue
+        raise ValueError('invalid repository maintenance target: use a dedicated warehouse; portable exports, restored states and unknown files are preserved')
 
 
 def _checked_journal(repo,value):
@@ -366,14 +409,14 @@ def _checked_journal(repo,value):
     return old,candidate
 
 
-def recover(repo):
+def recover(repo,*,cancelled=lambda:False):
     """Startup recovery rolls back uncommitted switches, never deletes payloads."""
     repo=_safe(repo);path=_journal(repo)
-    if not path.exists():return {'state':'clean'}
+    if not path.exists():return _resume_cleanup(repo,cancelled=cancelled)
     # Recovery needs the same OS lock, but lease deliberately refuses a journal.
     # Permit this one scoped entry by checking the journal only after acquisition.
-    with _recovery_lease(repo):
-        if not path.exists():return {'state':'clean'}
+    with _recovery_lease(repo,cancelled=cancelled):
+        if not path.exists():return _resume_cleanup(repo,cancelled=cancelled)
         value=json.loads(path.read_text(encoding='utf-8'));old,candidate=_checked_journal(repo,value)
         if value['phase']=='committed':
             if not repo.exists():raise ValueError('committed repository missing; old generation retained')
@@ -382,7 +425,7 @@ def recover(repo):
             for identity,digest in value['descriptor_sha256'].items():
                 if hashlib.sha256((repo/'points'/(identity+'.json')).read_bytes()).hexdigest()!=digest:
                     raise ValueError('committed point descriptor differs')
-            path.unlink();return {'state':'committed','old':str(old)}
+            path.unlink();return {'state':'committed','old':str(old),'cleanup':_resume_cleanup(repo,cancelled=cancelled)}
         if old.exists():
             if repo.exists():
                 if candidate.exists():raise ValueError('ambiguous repository switch; preserve all generations')
@@ -393,20 +436,21 @@ def recover(repo):
 
 
 @contextmanager
-def _recovery_lease(repo):
+def _recovery_lease(repo,*,cancelled=lambda:False):
     # lease checks the journal through a scoped thread flag, not by hiding it.
     old=getattr(_held,'recovering',False);_held.recovering=True
     try:
-        with lease(repo,write=True):yield
+        with lease(repo,write=True,cancelled=cancelled):yield
     finally:_held.recovering=old
 
 
 @guarded(write=True)
-def switch(repo,candidate,*,cancelled=lambda:False,checkpoint=lambda phase:None):
+def switch(repo,candidate,*,cancelled=lambda:False,checkpoint=lambda phase:None,retire_after_verification=False):
     repo=Path(repo).resolve();candidate=_safe(candidate)
     if candidate.parent!=repo.parent or not candidate.name.startswith('.'+repo.name+'.compact-'):
         raise ValueError('candidate must be an owned sibling generation')
     from .backup import repository
+    _dedicated(repo);_dedicated(candidate)
     repository(candidate)
     if (candidate/'INCOMPLETE.json').exists():raise ValueError('candidate compaction is incomplete')
     receipt=json.loads((candidate/'COMPACTION_RECEIPT.json').read_text(encoding='utf-8'))
@@ -426,9 +470,29 @@ def switch(repo,candidate,*,cancelled=lambda:False,checkpoint=lambda phase:None)
     path=_journal(repo);atomic_json(path,value);checkpoint('ready')
     os.replace(repo,old);value['phase']='old_moved';atomic_json(path,value);checkpoint('old_moved')
     os.replace(candidate,repo);value['phase']='new_active';atomic_json(path,value);checkpoint('new_active')
+    atomic_json(repo/'CLEANUP_RECEIPT.json',{'schema':'qq-next-generation-cleanup/1','old':str(old),
+      'owner_sha256':value['owner_sha256'],'descriptor_sha256':receipt['descriptor_sha256'],
+      'state':'ready' if retire_after_verification else 'awaiting_acceptance','created':time.time()})
     value['phase']='committed';atomic_json(path,value);checkpoint('committed')
     path.unlink()
     return {'state':'committed','old':str(old),'repository':str(repo),'keep':receipt['keep']}
+
+
+def _resume_cleanup(repo,*,cancelled=lambda:False):
+    path=Path(repo)/'CLEANUP_RECEIPT.json'
+    if not path.exists():return {'state':'clean'}
+    value=json.loads(path.read_text(encoding='utf-8'))
+    if value.get('schema')!='qq-next-generation-cleanup/1':raise ValueError('invalid generation cleanup receipt')
+    if value['state']=='awaiting_acceptance':return {'state':'clean','old_preserved':True,'requires_acceptance':True}
+    if value['state']=='complete':return {'state':'clean'}
+    if value['state'] not in ('ready','running'):raise ValueError('invalid generation cleanup state')
+    try:return {'state':'clean','cleanup':discard_old(repo,value['old'],cancelled=cancelled)}
+    except InterruptedError:raise
+    except Exception as exc:
+        if path.exists():
+            current=json.loads(path.read_text(encoding='utf-8'));current['last_error']=str(exc);current['last_attempt']=time.time()
+            atomic_json(path,current)
+        return {'state':'clean','cleanup_pending':True,'error':str(exc)}
 
 
 @guarded(write=True)
@@ -437,14 +501,26 @@ def discard_old(repo,old,*,cancelled=lambda:False):
     repo=_safe(repo);old=_safe(old)
     if old.parent!=repo.parent or not old.name.startswith('.'+repo.name+'.old-') or old==repo:
         raise ValueError('not an owned retired generation')
-    if (old/'OWNER.json').read_bytes()!=(repo/'OWNER.json').read_bytes():raise ValueError('retired repository identity differs')
     receipt=json.loads((repo/'COMPACTION_RECEIPT.json').read_text(encoding='utf-8'))
+    record_path=repo/'CLEANUP_RECEIPT.json'
+    record=json.loads(record_path.read_text(encoding='utf-8')) if record_path.exists() else {}
+    same_record=record.get('schema')=='qq-next-generation-cleanup/1' and record.get('old')==str(old) and record.get('descriptor_sha256')==receipt['descriptor_sha256'] and record.get('owner_sha256')==hashlib.sha256((repo/'OWNER.json').read_bytes()).hexdigest()
+    resuming=same_record and record.get('state')=='running'
+    if not old.exists():
+        if same_record and record.get('state') in ('ready','running','complete'):
+            record['state']='complete';atomic_json(record_path,record)
+            return {'files_removed':record.get('planned_files',0),'logical_bytes_removed':record.get('planned_bytes',0),'resumed':True}
+        raise ValueError('retired generation absent without an approved cleanup receipt')
+    if (old/'OWNER.json').exists():
+        if (old/'OWNER.json').read_bytes()!=(repo/'OWNER.json').read_bytes():raise ValueError('retired repository identity differs')
+    elif not resuming or any(_walk_files(old)):raise ValueError('retired generation ownership missing')
     for identity,digest in receipt['descriptor_sha256'].items():
-        if hashlib.sha256((old/'points'/(identity+'.json')).read_bytes()).hexdigest()!=digest:
-            raise ValueError('old retained point differs')
+        descriptor=old/'points'/(identity+'.json')
+        if resuming and not descriptor.exists():continue
+        if hashlib.sha256(descriptor.read_bytes()).hexdigest()!=digest:raise ValueError('old retained point differs')
     files=[(path,_fingerprint(path)) for path in _walk_files(old)]
     roots={'OWNER.json','refs.json','blocks.sqlite','blocks.sqlite-wal','blocks.sqlite-shm','RETENTION.json',
-      'RETIREMENT_RECEIPT.json','COMPACTION_RECEIPT.json'}
+      'RETIREMENT_RECEIPT.json','COMPACTION_RECEIPT.json','CLEANUP_RECEIPT.json'}
     for path,_ in files:
         parts=path.relative_to(old).parts
         if len(parts)==1 and parts[0] in roots:continue
@@ -453,13 +529,20 @@ def discard_old(repo,old,*,cancelled=lambda:False):
         if len(parts)==2 and parts[0].startswith('staging-') and parts[1] in ('catalog.sqlite','assets.sqlite','catalog.sqlite-wal','catalog.sqlite-shm','assets.sqlite-wal','assets.sqlite-shm'):continue
         raise ValueError('unrecognized file in old repository; preserve it for review')
     files.sort(key=lambda item:(item[0].name=='OWNER.json',item[0].as_posix()))
+    if not resuming:
+        record={'schema':'qq-next-generation-cleanup/1','old':str(old),'state':'running','created':time.time(),
+          'owner_sha256':hashlib.sha256((repo/'OWNER.json').read_bytes()).hexdigest(),'descriptor_sha256':receipt['descriptor_sha256'],
+          'planned_files':len(files),'planned_bytes':sum(item[1][2] for item in files)}
+        atomic_json(record_path,record)
     count=total=0
     for path,before in files:
         if cancelled():raise InterruptedError('retired repository cleanup cancelled')
         if _fingerprint(path)!=before:raise ValueError('retired file changed before cleanup')
         total+=before[2];path.unlink();count+=1
     for folder,dirs,names in os.walk(old,topdown=False):Path(folder).rmdir()
-    return {'files_removed':count,'logical_bytes_removed':total,'physical_bytes':'measure volume free space; immutable files may still have other links'}
+    record['state']='complete';record['finished']=time.time();atomic_json(record_path,record)
+    return {'files_removed':record.get('planned_files',count),'logical_bytes_removed':record.get('planned_bytes',total),
+      'physical_bytes':'measure volume free space; immutable files may still have other links','resumed':resuming}
 
 
 @guarded(write=True)
@@ -467,6 +550,10 @@ def compact(repo,*,cancelled=lambda:False,progress=lambda phase,count:None):
     """Shared GUI/Agent/automatic maintenance; preserve old pack on any failure."""
     from .backup import verify_point
     repo=Path(repo).resolve();candidate=repo.parent/('.'+repo.name+'.compact-'+uuid.uuid4().hex)
+    _dedicated(repo)
+    pending=_resume_cleanup(repo,cancelled=cancelled)
+    if pending.get('requires_acceptance') or pending.get('cleanup_pending'):
+        raise ValueError('previous generation requires acceptance or cleanup before another compaction')
     required=(repo/'blocks.sqlite').stat().st_size if (repo/'blocks.sqlite').exists() else 0
     if shutil.disk_usage(repo).free<required*1.1+256*1024**2:raise OSError('insufficient free space for an independent repository generation')
     try:
@@ -483,7 +570,7 @@ def compact(repo,*,cancelled=lambda:False,progress=lambda phase,count:None):
                 path.unlink()
             for folder,dirs,names in os.walk(candidate,topdown=False):Path(folder).rmdir()
         raise
-    result=switch(repo,candidate,cancelled=cancelled)
+    result=switch(repo,candidate,cancelled=cancelled,retire_after_verification=True)
     result['cleanup']=discard_old(repo,result['old'],cancelled=cancelled)
     result['verification']=receipt
     return result
