@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import struct
 import tempfile
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from pathlib import Path
 from .cipher import PAGE, AuthenticationError
 
 STRIDE = PAGE + 24
+WAL_SPOOL_BYTES = 8 * 1024**2
 
 
 def checksum(data: bytes, endian: str, first=0, second=0):
@@ -42,13 +44,18 @@ class FrozenWal:
         self.stream.close()
 
 
-def freeze(path: Path, *, memory_bytes=64*1024**2, cancelled=lambda:False) -> FrozenWal:
+def freeze(path: Path, *, memory_bytes=WAL_SPOOL_BYTES, directory=None, maximum_bytes=None, cancelled=lambda:False) -> FrozenWal:
     # SpooledTemporaryFile spills rather than imposing an input-size ceiling.
-    stream = tempfile.SpooledTemporaryFile(max_size=memory_bytes, mode='w+b')
+    stream = tempfile.SpooledTemporaryFile(max_size=memory_bytes, mode='w+b', dir=directory)
     try:
         if not path.exists():
             return FrozenWal(stream, b'', 0, None, 0, hashlib.sha256(b'').hexdigest(), 0)
         with path.open('rb') as source:
+            # A reader must finish even if the writer keeps appending frames.
+            size_at_open=os.fstat(source.fileno()).st_size
+            if maximum_bytes is not None and size_at_open>maximum_bytes:
+                raise AuthenticationError('WAL too large for guarded refresh during capture')
+            frame_budget = max(0, (size_at_open-32)//STRIDE)
             header = source.read(32)
             if not header:
                 return FrozenWal(stream, b'', 0, None, 0, hashlib.sha256(b'').hexdigest(), 0)
@@ -66,7 +73,7 @@ def freeze(path: Path, *, memory_bytes=64*1024**2, cancelled=lambda:False) -> Fr
             committed = total = 0
             database_pages = None
             committed_hash = digest.hexdigest()
-            while True:
+            for _ in range(frame_budget):
                 if cancelled():raise InterruptedError('WAL freeze cancelled')
                 frame = source.read(STRIDE)
                 if not frame:
@@ -95,6 +102,44 @@ def freeze(path: Path, *, memory_bytes=64*1024**2, cancelled=lambda:False) -> Fr
     except BaseException:
         stream.close()
         raise
+
+
+def epoch(path: Path):
+    """Identity and full header of the currently visible WAL generation."""
+    try:
+        with path.open('rb', buffering=0) as source:
+            stat = os.fstat(source.fileno())
+            header = source.read(32)
+    except FileNotFoundError:
+        return None
+    if not header:
+        return None
+    if len(header) != 32 or not stat.st_ino:
+        raise AuthenticationError('incomplete WAL identity during capture')
+    return (stat.st_dev, stat.st_ino, header)
+
+
+def verify_epoch(path: Path, expected, *, commit=None):
+    """Check the epoch and an optional commit witness in constant-size reads."""
+    try:
+        with path.open('rb', buffering=0) as source:
+            stat = os.fstat(source.fileno())
+            if (stat.st_dev, stat.st_ino, source.read(32)) != expected:
+                raise AuthenticationError('WAL reset during capture')
+            if commit is not None:
+                offset, header = commit
+                source.seek(offset)
+                if len(header) != 24 or source.read(24) != header:
+                    raise AuthenticationError('WAL commit changed during capture')
+            # A reset can race a read even when the first header matched.
+            source.seek(0)
+            if source.read(32) != expected[2]:
+                raise AuthenticationError('WAL reset during capture')
+        current = path.stat()
+    except FileNotFoundError:
+        raise AuthenticationError('WAL disappeared during capture') from None
+    if (current.st_dev, current.st_ino) != expected[:2]:
+        raise AuthenticationError('WAL replaced during capture')
 
 
 def verify_live_prefix(path: Path, frozen: FrozenWal, *, cancelled=lambda:False) -> None:

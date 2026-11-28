@@ -82,7 +82,7 @@ def main():
                 path=distribution.locate_file(relative)
                 if path.is_file():
                     target=licenses/name/Path(*relative.parts[1:]);target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
-    metadata={'schema':'qq-next-release/1','git_revision':revision,'product_version':'1.1.1','features':['portable_assistant','quiet_important_notices','unified_agent','rolling_repository','verified_compaction'],
+    metadata={'schema':'qq-next-release/1','git_revision':revision,'product_version':'1.1.2','features':['portable_assistant','quiet_important_notices','unified_agent','rolling_repository','verified_compaction','bounded_wal_capture'],
       'python':sys.version,'dependencies':versions,
       'native_runtime':json.loads((native/'runtime.json').read_text(encoding='utf-8')),'files':[]}
     for path in sorted(dist.rglob('*')):

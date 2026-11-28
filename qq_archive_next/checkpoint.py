@@ -14,11 +14,22 @@ import time
 from .cipher import AuthenticationError
 
 
+def shared_memory_identity(source):
+    if os.name != 'nt':
+        return None
+    try:
+        stat=Path(str(source)+'-shm').stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_dev,stat.st_ino
+
+
 class CheckpointGuard:
     def __init__(self,source):
         self.path=Path(str(source)+'-shm');self.handle=None;self.mode='optimistic_no_shm'
-        self.started=time.monotonic();self.seconds=0.0
+        self.started=time.monotonic();self.seconds=0.0;self.identity=None
         if os.name!='nt':self.mode='optimistic_platform';return
+        expected=shared_memory_identity(source)
         class Overlapped(ctypes.Structure):
             _fields_=[('internal',ctypes.c_size_t),('internal_high',ctypes.c_size_t),
                       ('offset',W.DWORD),('offset_high',W.DWORD),('event',W.HANDLE)]
@@ -40,6 +51,8 @@ class CheckpointGuard:
         self.handle=handle;self.mode='win32_sqlite_read0'
         try:
             stat=self.path.stat();self.identity=(stat.st_dev,stat.st_ino)
+            if self.identity!=expected:
+                raise AuthenticationError('source shared-memory generation changed during capture')
         except BaseException:self.release();raise
 
     def validate(self):
